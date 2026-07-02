@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>晷 · 慢钟</title>
+<style>
+  body { margin:0; overflow: hidden; background: #0f0f0f; }
+  canvas { display: block; }
+
+  #mantra {
+    position: fixed; bottom: 10%; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0); font-family: "Songti SC","Noto Serif SC",serif;
+    font-size: 17px; letter-spacing: 5px; transition: color 2s;
+    pointer-events: none; user-select: none;
+  }
+
+  #modeBtn {
+    position: fixed; top: 18px; right: 22px; z-index: 100;
+    background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;
+    padding: 8px 18px; font-size: 14px; cursor: pointer;
+    font-family: "PingFang SC","Microsoft YaHei",sans-serif;
+    backdrop-filter: blur(8px); transition: all .3s;
+  }
+  #modeBtn:hover { background: rgba(255,255,255,0.18); color: #fff; }
+
+  #timerPanel {
+    display: none; position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    background: rgba(20,20,22,0.92); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px; padding: 36px 44px 30px; z-index: 99;
+    backdrop-filter: blur(12px); box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    user-select: none;
+  }
+  #timerPanel label { color: rgba(255,255,255,0.5); font-size: 13px; font-family: "PingFang SC",sans-serif; }
+  #timerPanel input {
+    width: 64px; text-align: center; font-size: 28px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px; color: #fff; padding: 6px 0; margin: 0 4px;
+    font-family: "Helvetica Neue",monospace;
+  }
+  #timerPanel .sep { color: rgba(255,255,255,0.35); font-size: 26px; margin: 0 2px; }
+  #timerPanel .btns { margin-top: 22px; text-align: center; }
+  #timerPanel button {
+    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    padding: 8px 22px; font-size: 14px; cursor: pointer; margin: 0 6px;
+    font-family: "PingFang SC",sans-serif; transition: all .25s;
+  }
+  #timerPanel button:hover { background: rgba(255,255,255,0.2); color: #fff; }
+  #timerPanel button.primary { background: rgba(120,140,255,0.25); border-color: rgba(120,140,255,0.3); }
+  #timerPanel button.primary:hover { background: rgba(120,140,255,0.4); }
+  #timerDisplay {
+    text-align: center; font-size: 52px; color: rgba(255,255,255,0.9);
+    font-family: "Helvetica Neue",monospace; margin: 14px 0 0;
+    letter-spacing: 3px;
+  }
+</style>
+</head>
+<body>
+<div id="mantra"></div>
+<button id="modeBtn">⏱ 计时</button>
+
+<div id="timerPanel">
+  <div style="text-align:center;margin-bottom:8px;">
+    <label>分</label>
+    <input id="timerMin" type="number" min="0" max="99" value="5">
+    <span class="sep">:</span>
+    <input id="timerSec" type="number" min="0" max="59" value="0">
+    <label>秒</label>
+  </div>
+  <div id="timerDisplay">05:00</div>
+  <div class="btns">
+    <button class="primary" id="btnStart">开始</button>
+    <button id="btnPause">暂停</button>
+    <button id="btnReset">重置</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script>
+// ===== 箴言池 =====
+const mantras = [
+  "四时有序，不必追赶",
+  "让时间慢下来陪你养",
+  "葡萄转色时，风也慢半拍",
+  "官厅的水，不记秒",
+  "码农的钟，不必跳秒",
+  "庭前花开，不问春秋",
+  "一炉沉香，半卷残书",
+  "竹影扫阶，尘不动",
+  "松风煮茗，慢火煎心",
+  "月落乌啼，江枫渔火",
+  "不以物喜，不以己悲",
+  "归去，也无风雨也无晴",
+  "采菊东篱下，悠然见南山",
+  "行到水穷处，坐看云起时",
+  "晚来天欲雪，能饮一杯无",
+  "闲云潭影日悠悠，物换星移几度秋",
+  "落花人独立，微雨燕双飞",
+  "小荷才露尖尖角，早有蜻蜓立上头",
+  "春风不度玉门关，杨柳依依在此间",
+  "山高月小，水落石出",
+  "雾失楼台，月迷津渡",
+  "寒蝉凄切，对长亭晚",
+  "梧桐更兼细雨，到黄昏点点滴滴",
+  "二十四桥明月夜，玉人何处教吹箫",
+  "春江潮水连海平，海上明月共潮生"
+];
+
+// ===== 箴言不重复随机 =====
+let lastMantraIndex = -1;
+let lastMantraMinute = -1;  // 每分钟最多切换一次箴言
+
+function pickMantra() {
+  let idx;
+  do {
+    idx = floor(random(mantras.length));
+  } while (idx === lastMantraIndex && mantras.length > 1);
+  lastMantraIndex = idx;
+  return mantras[idx];
+}
+
+// 箴言：鼠标越近越亮，每分钟自动切换且不重复，平时完全隐藏
+function updateMantraVisibility() {
+  let cx = width / 2;
+  let cy = height / 2;
+  let d = dist(mouseX, mouseY, cx, cy);
+  let el = document.getElementById('mantra');
+
+  // 每分钟自动切换箴言（仅更换文本，不触发额外动画）
+  let currentMin = minute();
+  if (currentMin !== lastMantraMinute) {
+    lastMantraMinute = currentMin;
+    el.textContent = pickMantra();
+  }
+
+  // 鼠标在 220px 以内时渐显，越近越亮；超出则完全隐藏
+  if (d < 220) {
+    let alpha = map(d, 0, 220, 0.55, 0.0);
+    alpha = constrain(alpha, 0, 0.55);
+    el.style.color = 'rgba(255,255,255,' + alpha.toFixed(2) + ')';
+  } else {
+    el.style.color = 'rgba(255,255,255,0)';
+  }
+}
+
+// ===== 粒子 =====
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = random(width); this.y = random(height);
+    this.r = random(0.6, 2.2);
+    this.vx = random(-0.12, 0.12); this.vy = random(-0.08, 0.08);
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    if (this.x < -5 || this.x > width + 5 || this.y < -5 || this.y > height + 5) this.reset();
+  }
+  draw() { noStroke(); fill(200, 195, 185, 18); circle(this.x, this.y, this.r * 2); }
+}
+
+// ===== 全局状态 =====
+let particles = [];
+let lastHour = -1;
+let glowT = 0;
+let audioCtx = null;
+let timerMode = false;
+
+// 渐入：从亮到暗
+let globalAlpha = 0;
+let initDone = false;
+
+// 秒针平滑旋转角度（每帧累加）
+let smoothSecAngle = 0;
+
+// 计时器
+let timerInterval = null;
+let timerRemaining = 0;
+let timerRunning = false;
+
+// 计时器背景音乐
+let timerMusic = null;
+
+// ===== p5 =====
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  for (let i = 0; i < 80; i++) particles.push(new Particle());
+}
+
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+
+// ===== 绘制时钟模式 =====
+function drawClock() {
+  // 渐入：从亮到暗
+  if (!initDone) {
+    globalAlpha = min(globalAlpha + 1.2, 255);
+    if (globalAlpha >= 254) initDone = true;
+  }
+
+  // 背景
+  let bg = color(15, 15, 15);
+  if (glowT > 0) {
+    let a = map(glowT, 0, 180, 60, 0);
+    bg = lerpColor(color(255, 230, 190, a), bg, glowT / 180);
+    glowT--;
+  }
+  background(bg);
+
+  // 渐入遮罩
+  if (globalAlpha < 255) {
+    fill(0, 0, 0, 255 - globalAlpha);
+    noStroke();
+    rect(0, 0, width, height);
+  }
+
+  // 粒子
+  particles.forEach(p => { p.update(); p.draw(); });
+
+  // ===== 表盘 =====
+  let cx = width / 2;
+  let cy = height / 2;
+  let clockR = min(width, height) * 0.32;
+
+  // 鼠标距离决定清晰度
+  let d = dist(mouseX, mouseY, cx, cy);
+  let clarity = constrain(map(d, 0, 280, 1.0, 0.12), 0.08, 1.0);
+
+  // 箴言跟随鼠标距离渐显/渐隐
+  updateMantraVisibility();
+
+  // 外发光
+  if (clarity > 0.25) {
+    let glowA = map(clarity, 0.25, 1, 20, 80);
+    noFill();
+    stroke(255, 235, 210, glowA * 0.25);
+    strokeWeight(1.5);
+    circle(cx, cy, clockR * 2 + 20);
+  }
+
+  // 表盘底
+  noStroke();
+  fill(22, 22, 24, 255 * clarity);
+  circle(cx, cy, clockR * 2);
+
+  // 简化边框：一圈细线 + 粗略刻度
+  if (clarity > 0.15) {
+    // 外圈细线
+    stroke(255, 235, 210, 35 * clarity);
+    strokeWeight(0.8);
+    noFill();
+    circle(cx, cy, clockR * 2);
+
+    // 四个主要刻度（12/3/6/9 点），稍长稍粗
+    stroke(255, 235, 210, 50 * clarity);
+    strokeWeight(1.2);
+    let mainTicks = [0, 3, 6, 9];
+    for (let i = 0; i < mainTicks.length; i++) {
+      let a = -HALF_PI + mainTicks[i] * TWO_PI / 12;
+      let x1 = cx + cos(a) * (clockR - 14);
+      let y1 = cy + sin(a) * (clockR - 14);
+      let x2 = cx + cos(a) * (clockR - 2);
+      let y2 = cy + sin(a) * (clockR - 2);
+      line(x1, y1, x2, y2);
+    }
+
+    // 其余 8 个次要刻度，极短极细
+    stroke(255, 235, 210, 18 * clarity);
+    strokeWeight(0.5);
+    for (let i = 0; i < 12; i++) {
+      if (mainTicks.includes(i)) continue;
+      let a = -HALF_PI + i * TWO_PI / 12;
+      let x1 = cx + cos(a) * (clockR - 5);
+      let y1 = cy + sin(a) * (clockR - 5);
+      let x2 = cx + cos(a) * (clockR - 2);
+      let y2 = cy + sin(a) * (clockR - 2);
+      line(x1, y1, x2, y2);
+    }
+  }
+
+  // 中心圆点
+  noStroke();
+  fill(255, 240, 220, 180 * clarity);
+  circle(cx, cy, 5);
+
+  // ===== 指针 =====
+  let now = new Date();
+  let h = now.getHours() % 12;
+  let m = now.getMinutes();
+  let s = now.getSeconds();
+  let ms = now.getMilliseconds();
+
+  // 秒针角度（平滑连续旋转）
+  let targetSecAngle = (s + ms / 1000) * TWO_PI / 60 - HALF_PI;
+  let angleDiff = targetSecAngle - smoothSecAngle;
+  if (angleDiff > PI) angleDiff -= TWO_PI;
+  if (angleDiff < -PI) angleDiff += TWO_PI;
+  smoothSecAngle += angleDiff * 0.15;
+
+  // 时针
+  let hourAngle = (h + m / 60) * TWO_PI / 12 - HALF_PI;
+  drawHand(cx, cy, hourAngle, clockR * 0.5, 4, clarity, 200, 185, 170);
+
+  // 分针
+  let minAngle = (m + s / 60) * TWO_PI / 60 - HALF_PI;
+  drawHand(cx, cy, minAngle, clockR * 0.75, 2.5, clarity, 220, 210, 195);
+
+  // 秒针：完全隐藏，鼠标越近越明显，白色
+  let secClarity = 0;
+  if (d < 220) {
+    secClarity = map(d, 0, 220, clarity * 0.85, 0.0);
+    secClarity = constrain(secClarity, 0, clarity);
+  }
+  if (secClarity > 0.02) {
+    drawHand(cx, cy, smoothSecAngle, clockR * 0.82, 1.0, secClarity, 255, 255, 255);
+  }
+
+  // 整点期间额外显示秒针（白色，更亮）
+  if (glowT > 60) {
+    let glowSecClarity = map(glowT, 60, 180, 0, clarity * 0.9);
+    drawHand(cx, cy, smoothSecAngle, clockR * 0.82, 1.2, glowSecClarity, 255, 255, 255);
+  }
+
+  // 整点触发
+  let currentH = hour();
+  if (currentH !== lastHour) {
+    lastHour = currentH;
+    glowT = 180;
+    triggerChime();
+  }
+
+  // 中心覆盖圆
+  noStroke();
+  fill(22, 22, 24, 255 * clarity);
+  circle(cx, cy, 8);
+  fill(255, 240, 220, 200 * clarity);
+  circle(cx, cy, 4);
+}
+
+function drawHand(cx, cy, angle, len, w, clarity, r, g, b) {
+  if (clarity < 0.05) return;
+  let ex = cx + cos(angle) * len;
+  let ey = cy + sin(angle) * len;
+  stroke(r, g, b, 220 * clarity);
+  strokeWeight(w);
+  line(cx, cy, ex, ey);
+  // 尾部短延伸
+  let bx = cx - cos(angle) * len * 0.12;
+  let by = cy - sin(angle) * len * 0.12;
+  line(cx, cy, bx, by);
+}
+
+// ===== 主绘制 =====
+function draw() {
+  if (timerMode) return;
+  drawClock();
+}
+
+// ===== 整点报时（仅提示音）=====
+function triggerChime() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let osc = audioCtx.createOscillator();
+  let gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(523, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(1046, audioCtx.currentTime + 0.6);
+  gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.8);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 2);
+}
+
+// ===== 计时器背景音乐（柔和钢琴风和弦，音量已调大）=====
+function ensureAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function startTimerMusic() {
+  if (timerMusic && timerMusic.playing) return;
+  ensureAudioCtx();
+
+  let masterGain = audioCtx.createGain();
+  masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
+  masterGain.gain.linearRampToValueAtTime(0.30, audioCtx.currentTime + 2);
+  masterGain.connect(audioCtx.destination);
+
+  // 柔和和弦：C大调分解和弦循环
+  let chords = [
+    [261.63, 329.63, 392.00],   // C major
+    [261.63, 329.63, 392.00],   // C major
+    [220.00, 277.18, 329.63],   // Am
+    [220.00, 277.18, 329.63],   // Am
+    [261.63, 329.63, 392.00],   // C major
+    [261.63, 329.63, 392.00],   // C major
+    [174.61, 220.00, 261.63],   // F major
+    [174.61, 220.00, 261.63],   // F major
+    [293.66, 369.99, 440.00],   // Dm
+    [293.66, 369.99, 440.00],   // Dm
+    [261.63, 329.63, 392.00],   // C major
+    [261.63, 329.63, 392.00],   // C major
+    [349.23, 440.00, 523.25],   // F major (high)
+    [349.23, 440.00, 523.25],   // F major
+    [261.63, 329.63, 392.00],   // C major
+    [261.63, 329.63, 392.00],   // C major
+  ];
+
+  let nodes = [];
+  let chordDur = 1.6;
+
+  for (let i = 0; i < chords.length; i++) {
+    let chord = chords[i];
+    let startTime = audioCtx.currentTime + i * chordDur;
+    for (let j = 0; j < chord.length; j++) {
+      let freq = chord[j];
+      let vol = j === 0 ? 0.22 : 0.14;
+      let detune = (j === 2) ? 3 : (j === 1) ? -2 : 0;
+
+      let osc = audioCtx.createOscillator();
+      let gain = audioCtx.createGain();
+      let filter = audioCtx.createBiquadFilter();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+      osc.detune.setValueAtTime(detune, startTime);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(800, startTime);
+      filter.Q.setValueAtTime(0.5, startTime);
+
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(vol, startTime + 0.15);
+      gain.gain.linearRampToValueAtTime(vol * 0.6, startTime + chordDur * 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + chordDur);
+
+      osc.connect(filter).connect(gain).connect(masterGain);
+      osc.start(startTime);
+      osc.stop(startTime + chordDur + 0.1);
+      nodes.push(osc);
+    }
+  }
+
+  timerMusic = { nodes, masterGain, playing: true };
+
+  let totalDur = chords.length * chordDur;
+  timerMusic.loopTimer = setTimeout(() => {
+    if (timerMusic && timerMusic.playing) startTimerMusicLoop();
+  }, (totalDur - 0.5) * 1000);
+}
+
+function startTimerMusicLoop() {
+  if (!timerMusic || !timerMusic.playing) return;
+  startTimerMusic();
+}
+
+function stopTimerMusic() {
+  if (!timerMusic || !timerMusic.playing) return;
+  timerMusic.playing = false;
+  clearTimeout(timerMusic.loopTimer);
+  timerMusic.masterGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+  setTimeout(() => {
+    timerMusic.nodes.forEach(n => { try { n.stop(); } catch(e){} });
+    timerMusic = null;
+  }, 2000);
+}
+
+// ===== 计时器逻辑 =====
+let timerEndTime = 0;
+
+function updateTimerDisplay() {
+  let secs = timerRemaining;
+  let mm = nf(floor(secs / 60), 2);
+  let ss = nf(secs % 60, 2);
+  document.getElementById('timerDisplay').textContent = mm + ':' + ss;
+}
+
+function timerTick() {
+  if (!timerRunning) return;
+  timerRemaining--;
+  updateTimerDisplay();
+  if (timerRemaining <= 0) {
+    timerFinished();
+  }
+}
+
+function timerFinished() {
+  timerRunning = false;
+  clearInterval(timerInterval);
+  timerInterval = null;
+  stopTimerMusic();
+  triggerChime();
+  document.getElementById('btnStart').textContent = '开始';
+}
+
+// ===== UI 事件 =====
+document.getElementById('modeBtn').addEventListener('click', function() {
+  timerMode = !timerMode;
+  let panel = document.getElementById('timerPanel');
+  let btn = document.getElementById('modeBtn');
+  if (timerMode) {
+    panel.style.display = 'block';
+    btn.textContent = '⏐ 返回';
+    if (!timerRunning) stopTimerMusic();
+  } else {
+    panel.style.display = 'none';
+    btn.textContent = '⏱ 计时';
+    if (timerRunning) {
+      timerRunning = false;
+      clearInterval(timerInterval);
+      timerInterval = null;
+      stopTimerMusic();
+      document.getElementById('btnStart').textContent = '开始';
+    }
+  }
+});
+
+document.getElementById('btnStart').addEventListener('click', function() {
+  if (timerRunning) return;
+  if (timerRemaining <= 0) {
+    resetTimer();
+  }
+  if (timerRemaining <= 0) return;
+
+  timerRunning = true;
+  this.textContent = '运行中';
+  startTimerMusic();
+  timerInterval = setInterval(timerTick, 1000);
+});
+
+document.getElementById('btnPause').addEventListener('click', function() {
+  if (!timerRunning) return;
+  timerRunning = false;
+  clearInterval(timerInterval);
+  timerInterval = null;
+  stopTimerMusic();
+  document.getElementById('btnStart').textContent = '继续';
+});
+
+document.getElementById('btnReset').addEventListener('click', function() {
+  resetTimer();
+  stopTimerMusic();
+  document.getElementById('btnStart').textContent = '开始';
+});
+
+function resetTimer() {
+  timerRunning = false;
+  clearInterval(timerInterval);
+  timerInterval = null;
+  let mm = parseInt(document.getElementById('timerMin').value) || 0;
+  let ss = parseInt(document.getElementById('timerSec').value) || 0;
+  timerRemaining = mm * 60 + ss;
+  updateTimerDisplay();
+}
+
+// 输入限制
+document.getElementById('timerMin').addEventListener('change', function() {
+  let v = parseInt(this.value) || 0;
+  v = constrain(v, 0, 99);
+  this.value = v;
+  if (!timerRunning) resetTimer();
+});
+document.getElementById('timerSec').addEventListener('change', function() {
+  let v = parseInt(this.value) || 0;
+  v = constrain(v, 0, 59);
+  this.value = v;
+  if (!timerRunning) resetTimer();
+});
+
+// 初始化显示
+resetTimer();
+</script>
+</body>
+</html>
